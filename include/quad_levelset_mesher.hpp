@@ -22,6 +22,11 @@ enum class CellType {
     Quad = 4
 };
 
+enum class RemeshMode {
+    QuadDominant,
+    TriangleOnly
+};
+
 struct Cell {
     CellType type{CellType::Triangle};
     std::vector<std::size_t> nodes;
@@ -47,10 +52,12 @@ class QuadLevelSetMesher {
 public:
     explicit QuadLevelSetMesher(double epsilon = 1.0e-12);
 
-    // Split one convex Q1 quadrilateral using linear interpolation of phi on edges.
-    // Typical 2-edge cuts produce a quad-dominant triangle/quad mesh.
-    // The alternating-sign Q1 saddle case is resolved by a center-sign diagonal.
-    [[nodiscard]] MixedMesh remesh(const QuadInput& input) const;
+    // divisions = N subdivides each coarse quad into N x N quads and each
+    // coarse triangle into N^2 triangles. N=1 preserves the coarse topology.
+    [[nodiscard]] MixedMesh remesh(
+        const QuadInput& input,
+        std::size_t divisions = 1,
+        RemeshMode mode = RemeshMode::QuadDominant) const;
 
 private:
     double eps_;
