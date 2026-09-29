@@ -11,12 +11,19 @@ It also supports a user-controlled subdivision count.
 
 ## Division control
 
-`divisions = N` means:
+`divisions = N` now subdivides the **original Q1 quadrilateral first** into an
+`N x N` grid.  The level-set interface is then cut inside each small Q1 cell.
 
-- every coarse quad becomes `N x N` quads;
-- every coarse triangle becomes `N^2` triangles.
+This gives a much more uniform mesh:
 
-So increasing `N` gives a denser mesh without moving the straight level-set interface.
+- uncut micro-cells remain quads in `QuadDominant` mode;
+- only micro-cells touched by the interface are locally remeshed;
+- `TriangleOnly` converts the final quad-dominant mesh to triangles;
+- no large coarse cell is kept simply because it lies far from the cut.
+
+The interface is piecewise straight inside each micro-cell, based on the Q1
+interpolated `phi` values. Increasing `N` therefore also improves the
+resolution of the Q1 zero contour.
 
 ## Build
 
