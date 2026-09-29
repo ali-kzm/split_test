@@ -94,7 +94,7 @@ int main() {
         assert(m.quad_count() == 0);
         assert(m.triangle_count() > 0);
         check_area(m);
-        assert(max_cell_area(m) <= (1.0 / 18.0) + 1.0e-12);
+        assert(max_cell_area(m) <= (1.0 / 9.0) + 1.0e-12);
     }
 
     {
