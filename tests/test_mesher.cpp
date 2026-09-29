@@ -64,6 +64,28 @@ int main() {
     }
 
     {
+        // A triangular phase region in QuadDominant mode must not remain
+        // entirely triangular: retain one inner triangle and surround it
+        // with three quads.
+        const auto m = mesher.remesh(
+            unit_quad({-1.0, 1.0, 1.0, 1.0}),
+            1, RemeshMode::QuadDominant);
+
+        std::size_t negative_quads = 0;
+        std::size_t negative_triangles = 0;
+        for (const auto& cell : m.cells) {
+            if (cell.phase != -1) continue;
+            if (cell.type == CellType::Quad) ++negative_quads;
+            if (cell.type == CellType::Triangle) ++negative_triangles;
+        }
+
+        assert(negative_quads == 3);
+        assert(negative_triangles == 1);
+        assert(m.quad_count() > m.triangle_count());
+        check_area(m);
+    }
+
+    {
         // The interface x=0.5 lies exactly on the 2x2 subdivision line.
         const auto m = mesher.remesh(
             unit_quad({-1.0, 1.0, 1.0, -1.0}),
