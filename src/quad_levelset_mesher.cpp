@@ -220,30 +220,21 @@ void process_triangle(MixedMesh& mesh, const Polygon& tri, double eps) {
     decompose_polygon(mesh, neg, -1, eps);
 }
 
-[[nodiscard]] PolyVertex lerp_triangle(
-    const PolyVertex& a, const PolyVertex& b, const PolyVertex& c,
-    std::size_t i, std::size_t j, std::size_t n) {
-    const double wb = static_cast<double>(i) / static_cast<double>(n);
-    const double wc = static_cast<double>(j) / static_cast<double>(n);
-    const double wa = 1.0 - wb - wc;
-    return {{wa*a.p.x + wb*b.p.x + wc*c.p.x,
-             wa*a.p.y + wb*b.p.y + wc*c.p.y},
-            wa*a.phi + wb*b.phi + wc*c.phi};
-}
-
-[[nodiscard]] PolyVertex lerp_quad(
-    const PolyVertex& q0, const PolyVertex& q1,
-    const PolyVertex& q2, const PolyVertex& q3,
-    std::size_t i, std::size_t j, std::size_t n) {
-    const double u = static_cast<double>(i) / static_cast<double>(n);
-    const double v = static_cast<double>(j) / static_cast<double>(n);
+[[nodiscard]] PolyVertex bilinear_vertex(
+    const QuadInput& input, double u, double v) {
     const double w0 = (1.0-u)*(1.0-v);
     const double w1 = u*(1.0-v);
     const double w2 = u*v;
     const double w3 = (1.0-u)*v;
-    return {{w0*q0.p.x + w1*q1.p.x + w2*q2.p.x + w3*q3.p.x,
-             w0*q0.p.y + w1*q1.p.y + w2*q2.p.y + w3*q3.p.y},
-            w0*q0.phi + w1*q1.phi + w2*q2.phi + w3*q3.phi};
+
+    PolyVertex out;
+    out.p.x = w0*input.nodes[0].x + w1*input.nodes[1].x
+            + w2*input.nodes[2].x + w3*input.nodes[3].x;
+    out.p.y = w0*input.nodes[0].y + w1*input.nodes[1].y
+            + w2*input.nodes[2].y + w3*input.nodes[3].y;
+    out.phi = w0*input.phi[0] + w1*input.phi[1]
+            + w2*input.phi[2] + w3*input.phi[3];
+    return out;
 }
 
 [[nodiscard]] MixedMesh triangulate_mesh(const MixedMesh& input, double eps) {
@@ -251,7 +242,9 @@ void process_triangle(MixedMesh& mesh, const Polygon& tri, double eps) {
     for (const auto& cell : input.cells) {
         if (cell.type == CellType::Triangle) {
             Polygon tri;
-            for (const auto id : cell.nodes) tri.push_back({input.nodes[id].p, input.nodes[id].phi});
+            for (const auto id : cell.nodes) {
+                tri.push_back({input.nodes[id].p, input.nodes[id].phi});
+            }
             add_cell(out, tri, cell.phase, eps);
             continue;
         }
@@ -279,47 +272,78 @@ void process_triangle(MixedMesh& mesh, const Polygon& tri, double eps) {
     return out;
 }
 
-[[nodiscard]] MixedMesh subdivide_mesh(const MixedMesh& input, std::size_t divisions, double eps) {
-    if (divisions == 1) return input;
-
-    MixedMesh out;
-    for (const auto& cell : input.cells) {
-        if (cell.type == CellType::Triangle) {
-            const PolyVertex a{input.nodes[cell.nodes[0]].p, input.nodes[cell.nodes[0]].phi};
-            const PolyVertex b{input.nodes[cell.nodes[1]].p, input.nodes[cell.nodes[1]].phi};
-            const PolyVertex c{input.nodes[cell.nodes[2]].p, input.nodes[cell.nodes[2]].phi};
-
-            for (std::size_t j = 0; j < divisions; ++j) {
-                for (std::size_t i = 0; i + j < divisions; ++i) {
-                    const auto p00 = lerp_triangle(a, b, c, i, j, divisions);
-                    const auto p10 = lerp_triangle(a, b, c, i + 1, j, divisions);
-                    const auto p01 = lerp_triangle(a, b, c, i, j + 1, divisions);
-                    add_cell(out, Polygon{p00, p10, p01}, cell.phase, eps);
-
-                    if (i + j + 1 < divisions) {
-                        const auto p11 = lerp_triangle(a, b, c, i + 1, j + 1, divisions);
-                        add_cell(out, Polygon{p10, p11, p01}, cell.phase, eps);
-                    }
-                }
-            }
-        } else {
-            const PolyVertex q0{input.nodes[cell.nodes[0]].p, input.nodes[cell.nodes[0]].phi};
-            const PolyVertex q1{input.nodes[cell.nodes[1]].p, input.nodes[cell.nodes[1]].phi};
-            const PolyVertex q2{input.nodes[cell.nodes[2]].p, input.nodes[cell.nodes[2]].phi};
-            const PolyVertex q3{input.nodes[cell.nodes[3]].p, input.nodes[cell.nodes[3]].phi};
-
-            for (std::size_t j = 0; j < divisions; ++j) {
-                for (std::size_t i = 0; i < divisions; ++i) {
-                    const auto p00 = lerp_quad(q0, q1, q2, q3, i, j, divisions);
-                    const auto p10 = lerp_quad(q0, q1, q2, q3, i + 1, j, divisions);
-                    const auto p11 = lerp_quad(q0, q1, q2, q3, i + 1, j + 1, divisions);
-                    const auto p01 = lerp_quad(q0, q1, q2, q3, i, j + 1, divisions);
-                    add_cell(out, Polygon{p00, p10, p11, p01}, cell.phase, eps);
-                }
-            }
+void append_mesh(MixedMesh& destination, const MixedMesh& source, double eps) {
+    for (const auto& cell : source.cells) {
+        Polygon poly;
+        poly.reserve(cell.nodes.size());
+        for (const auto id : cell.nodes) {
+            poly.push_back({source.nodes[id].p, source.nodes[id].phi});
         }
+        add_cell(destination, poly, cell.phase, eps);
     }
-    return out;
+}
+
+[[nodiscard]] MixedMesh remesh_coarse_quad(const QuadInput& input, double eps) {
+    Polygon q;
+    q.reserve(4);
+    for (std::size_t i = 0; i < 4; ++i) {
+        q.push_back({input.nodes[i], input.phi[i]});
+    }
+
+    if (!is_convex_quad(q, eps)) {
+        throw std::invalid_argument(
+            "Input nodes must form a non-degenerate convex quadrilateral in boundary order");
+    }
+    if (signed_area(q) < 0.0) {
+        std::reverse(q.begin(), q.end());
+    }
+
+    int npos = 0;
+    int nneg = 0;
+    for (const auto& v : q) {
+        const int s = strict_sign(v.phi, eps);
+        if (s > 0) ++npos;
+        if (s < 0) ++nneg;
+    }
+
+    MixedMesh mesh;
+    if (nneg == 0) {
+        decompose_polygon(mesh, q, +1, eps);
+        return mesh;
+    }
+    if (npos == 0) {
+        decompose_polygon(mesh, q, -1, eps);
+        return mesh;
+    }
+
+    const std::array<int, 4> s{
+        strict_sign(q[0].phi, eps), strict_sign(q[1].phi, eps),
+        strict_sign(q[2].phi, eps), strict_sign(q[3].phi, eps)};
+    const bool alternating =
+        s[0] != 0 && s[1] != 0 && s[2] != 0 && s[3] != 0 &&
+        s[0] == s[2] && s[1] == s[3] && s[0] != s[1];
+
+    if (alternating) {
+        const double center_phi =
+            0.25 * (q[0].phi + q[1].phi + q[2].phi + q[3].phi);
+        const int raw_center_sign = strict_sign(center_phi, eps);
+        const int center_sign = raw_center_sign != 0 ? raw_center_sign : s[0];
+
+        if (s[0] == center_sign) {
+            process_triangle(mesh, Polygon{q[0], q[1], q[2]}, eps);
+            process_triangle(mesh, Polygon{q[0], q[2], q[3]}, eps);
+        } else {
+            process_triangle(mesh, Polygon{q[1], q[2], q[3]}, eps);
+            process_triangle(mesh, Polygon{q[1], q[3], q[0]}, eps);
+        }
+        return mesh;
+    }
+
+    const Polygon pos = clip_by_sign(q, +1, eps);
+    const Polygon neg = clip_by_sign(q, -1, eps);
+    decompose_polygon(mesh, pos, +1, eps);
+    decompose_polygon(mesh, neg, -1, eps);
+    return mesh;
 }
 
 } // namespace
@@ -361,66 +385,52 @@ MixedMesh QuadLevelSetMesher::remesh(
         throw std::invalid_argument("divisions must be >= 1");
     }
 
-    Polygon q;
-    q.reserve(4);
-    for (std::size_t i = 0; i < 4; ++i) q.push_back({input.nodes[i], input.phi[i]});
-
-    if (!is_convex_quad(q, eps_)) {
-        throw std::invalid_argument("Input nodes must form a non-degenerate convex quadrilateral in boundary order");
+    // Validate the parent Q1 quadrilateral once.
+    Polygon parent;
+    parent.reserve(4);
+    for (std::size_t i = 0; i < 4; ++i) {
+        parent.push_back({input.nodes[i], input.phi[i]});
     }
-    if (signed_area(q) < 0.0) std::reverse(q.begin(), q.end());
-
-    auto finish = [&](MixedMesh mesh) {
-        if (mode == RemeshMode::TriangleOnly) {
-            mesh = triangulate_mesh(mesh, eps_);
-        }
-        return subdivide_mesh(mesh, divisions, eps_);
-    };
-
-    int npos = 0;
-    int nneg = 0;
-    for (const auto& v : q) {
-        const int s = strict_sign(v.phi, eps_);
-        if (s > 0) ++npos;
-        if (s < 0) ++nneg;
+    if (!is_convex_quad(parent, eps_)) {
+        throw std::invalid_argument(
+            "Input nodes must form a non-degenerate convex quadrilateral in boundary order");
     }
 
+    // Important: refine the parent element FIRST.  Each micro-Q1 cell is then
+    // cut by its locally linearized phi=0 interface.  This avoids the old
+    // behavior where tiny elements clustered in one phase polygon while long
+    // coarse cells survived elsewhere.
     MixedMesh mesh;
-    if (nneg == 0) {
-        decompose_polygon(mesh, q, +1, eps_);
-        return finish(std::move(mesh));
-    }
-    if (npos == 0) {
-        decompose_polygon(mesh, q, -1, eps_);
-        return finish(std::move(mesh));
-    }
+    for (std::size_t j = 0; j < divisions; ++j) {
+        const double v0 = static_cast<double>(j) /
+                          static_cast<double>(divisions);
+        const double v1 = static_cast<double>(j + 1) /
+                          static_cast<double>(divisions);
 
-    const std::array<int, 4> s{
-        strict_sign(q[0].phi, eps_), strict_sign(q[1].phi, eps_),
-        strict_sign(q[2].phi, eps_), strict_sign(q[3].phi, eps_)};
-    const bool alternating = s[0] != 0 && s[1] != 0 && s[2] != 0 && s[3] != 0 &&
-                             s[0] == s[2] && s[1] == s[3] && s[0] != s[1];
+        for (std::size_t i = 0; i < divisions; ++i) {
+            const double u0 = static_cast<double>(i) /
+                              static_cast<double>(divisions);
+            const double u1 = static_cast<double>(i + 1) /
+                              static_cast<double>(divisions);
 
-    if (alternating) {
-        const double center_phi = 0.25 * (q[0].phi + q[1].phi + q[2].phi + q[3].phi);
-        const int raw_center_sign = strict_sign(center_phi, eps_);
-        const int center_sign = raw_center_sign != 0 ? raw_center_sign : s[0];
+            const PolyVertex p00 = bilinear_vertex(input, u0, v0);
+            const PolyVertex p10 = bilinear_vertex(input, u1, v0);
+            const PolyVertex p11 = bilinear_vertex(input, u1, v1);
+            const PolyVertex p01 = bilinear_vertex(input, u0, v1);
 
-        if (s[0] == center_sign) {
-            process_triangle(mesh, Polygon{q[0], q[1], q[2]}, eps_);
-            process_triangle(mesh, Polygon{q[0], q[2], q[3]}, eps_);
-        } else {
-            process_triangle(mesh, Polygon{q[1], q[2], q[3]}, eps_);
-            process_triangle(mesh, Polygon{q[1], q[3], q[0]}, eps_);
+            QuadInput sub;
+            sub.nodes = {p00.p, p10.p, p11.p, p01.p};
+            sub.phi   = {p00.phi, p10.phi, p11.phi, p01.phi};
+
+            const MixedMesh local = remesh_coarse_quad(sub, eps_);
+            append_mesh(mesh, local, eps_);
         }
-        return finish(std::move(mesh));
     }
 
-    const Polygon pos = clip_by_sign(q, +1, eps_);
-    const Polygon neg = clip_by_sign(q, -1, eps_);
-    decompose_polygon(mesh, pos, +1, eps_);
-    decompose_polygon(mesh, neg, -1, eps_);
-    return finish(std::move(mesh));
+    if (mode == RemeshMode::TriangleOnly) {
+        mesh = triangulate_mesh(mesh, eps_);
+    }
+    return mesh;
 }
 
 void write_legacy_vtk(const std::string& filename, const MixedMesh& mesh) {
