@@ -17,8 +17,9 @@ It also supports a user-controlled subdivision count.
 This gives a much more uniform mesh:
 
 - uncut micro-cells remain quads in `QuadDominant` mode;
+- triangular cut regions are converted to **3 quads + 1 retained inner triangle**;
 - only micro-cells touched by the interface are locally remeshed;
-- `TriangleOnly` converts the final quad-dominant mesh to triangles;
+- `TriangleOnly` keeps the triangle-only path separate and converts quads to triangles;
 - no large coarse cell is kept simply because it lies far from the cut.
 
 The interface is piecewise straight inside each micro-cell, based on the Q1
