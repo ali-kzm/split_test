@@ -52,8 +52,9 @@ class QuadLevelSetMesher {
 public:
     explicit QuadLevelSetMesher(double epsilon = 1.0e-12);
 
-    // divisions = N subdivides each coarse quad into N x N quads and each
-    // coarse triangle into N^2 triangles. N=1 preserves the coarse topology.
+    // divisions = N first subdivides the parent Q1 quadrilateral into an
+    // N x N grid, then cuts/remeshes only the micro-cells touched by phi = 0.
+    // N=1 preserves the original coarse behavior.
     [[nodiscard]] MixedMesh remesh(
         const QuadInput& input,
         std::size_t divisions = 1,
