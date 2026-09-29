@@ -149,12 +149,60 @@ void add_cell(MixedMesh& mesh, const Polygon& poly, int phase, double eps) {
     mesh.cells.push_back(std::move(cell));
 }
 
-void decompose_polygon(MixedMesh& mesh, Polygon poly, int phase, double eps) {
+void add_quad_dominant_triangle(
+    MixedMesh& mesh, Polygon tri, int phase, double eps) {
+    if (tri.size() != 3) {
+        throw std::runtime_error(
+            "Internal error: quad-dominant triangle template expects 3 vertices");
+    }
+    if (polygon_area(tri) <= eps * eps) return;
+    if (signed_area(tri) < 0.0) {
+        std::reverse(tri.begin(), tri.end());
+    }
+
+    // Keep exactly one triangle in the interior and surround it with 3 quads.
+    // No extra points are inserted on the outer boundary, so this template is
+    // conforming with neighboring coarse/micro cells.
+    constexpr double inner_scale = 0.35;
+
+    PolyVertex center;
+    center.p.x = (tri[0].p.x + tri[1].p.x + tri[2].p.x) / 3.0;
+    center.p.y = (tri[0].p.y + tri[1].p.y + tri[2].p.y) / 3.0;
+    center.phi = (tri[0].phi + tri[1].phi + tri[2].phi) / 3.0;
+
+    std::array<PolyVertex, 3> inner{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        inner[i].p.x =
+            center.p.x + inner_scale * (tri[i].p.x - center.p.x);
+        inner[i].p.y =
+            center.p.y + inner_scale * (tri[i].p.y - center.p.y);
+        inner[i].phi =
+            center.phi + inner_scale * (tri[i].phi - center.phi);
+    }
+
+    add_cell(mesh, Polygon{tri[0], tri[1], inner[1], inner[0]}, phase, eps);
+    add_cell(mesh, Polygon{tri[1], tri[2], inner[2], inner[1]}, phase, eps);
+    add_cell(mesh, Polygon{tri[2], tri[0], inner[0], inner[2]}, phase, eps);
+    add_cell(mesh, Polygon{inner[0], inner[1], inner[2]}, phase, eps);
+}
+
+void decompose_polygon(
+    MixedMesh& mesh, Polygon poly, int phase, double eps,
+    bool quad_dominant) {
     remove_duplicate_vertices(poly, eps);
     if (poly.size() < 3 || polygon_area(poly) <= eps * eps) return;
     if (signed_area(poly) < 0.0) std::reverse(poly.begin(), poly.end());
 
-    if (poly.size() == 3 || poly.size() == 4) {
+    if (poly.size() == 3) {
+        if (quad_dominant) {
+            add_quad_dominant_triangle(mesh, poly, phase, eps);
+        } else {
+            add_cell(mesh, poly, phase, eps);
+        }
+        return;
+    }
+
+    if (poly.size() == 4) {
         add_cell(mesh, poly, phase, eps);
         return;
     }
@@ -184,13 +232,23 @@ void decompose_polygon(MixedMesh& mesh, Polygon poly, int phase, double eps) {
         const std::size_t i2 = (best_i + 2) % 5;
         const std::size_t i3 = (best_i + 3) % 5;
         const std::size_t i4 = (best_i + 4) % 5;
-        add_cell(mesh, Polygon{poly[i0], poly[i1], poly[i2]}, phase, eps);
+        const Polygon triangle{poly[i0], poly[i1], poly[i2]};
+        if (quad_dominant) {
+            add_quad_dominant_triangle(mesh, triangle, phase, eps);
+        } else {
+            add_cell(mesh, triangle, phase, eps);
+        }
         add_cell(mesh, Polygon{poly[i0], poly[i2], poly[i3], poly[i4]}, phase, eps);
         return;
     }
 
     for (std::size_t i = 1; i + 1 < poly.size(); ++i) {
-        add_cell(mesh, Polygon{poly[0], poly[i], poly[i + 1]}, phase, eps);
+        const Polygon triangle{poly[0], poly[i], poly[i + 1]};
+        if (quad_dominant) {
+            add_quad_dominant_triangle(mesh, triangle, phase, eps);
+        } else {
+            add_cell(mesh, triangle, phase, eps);
+        }
     }
 }
 
@@ -213,11 +271,13 @@ void decompose_polygon(MixedMesh& mesh, Polygon poly, int phase, double eps) {
     return 0;
 }
 
-void process_triangle(MixedMesh& mesh, const Polygon& tri, double eps) {
+void process_triangle(
+    MixedMesh& mesh, const Polygon& tri, double eps,
+    bool quad_dominant) {
     const Polygon pos = clip_by_sign(tri, +1, eps);
     const Polygon neg = clip_by_sign(tri, -1, eps);
-    decompose_polygon(mesh, pos, +1, eps);
-    decompose_polygon(mesh, neg, -1, eps);
+    decompose_polygon(mesh, pos, +1, eps, quad_dominant);
+    decompose_polygon(mesh, neg, -1, eps, quad_dominant);
 }
 
 [[nodiscard]] PolyVertex bilinear_vertex(
@@ -283,7 +343,8 @@ void append_mesh(MixedMesh& destination, const MixedMesh& source, double eps) {
     }
 }
 
-[[nodiscard]] MixedMesh remesh_coarse_quad(const QuadInput& input, double eps) {
+[[nodiscard]] MixedMesh remesh_coarse_quad(
+    const QuadInput& input, double eps, bool quad_dominant) {
     Polygon q;
     q.reserve(4);
     for (std::size_t i = 0; i < 4; ++i) {
@@ -308,11 +369,11 @@ void append_mesh(MixedMesh& destination, const MixedMesh& source, double eps) {
 
     MixedMesh mesh;
     if (nneg == 0) {
-        decompose_polygon(mesh, q, +1, eps);
+        decompose_polygon(mesh, q, +1, eps, quad_dominant);
         return mesh;
     }
     if (npos == 0) {
-        decompose_polygon(mesh, q, -1, eps);
+        decompose_polygon(mesh, q, -1, eps, quad_dominant);
         return mesh;
     }
 
@@ -330,19 +391,19 @@ void append_mesh(MixedMesh& destination, const MixedMesh& source, double eps) {
         const int center_sign = raw_center_sign != 0 ? raw_center_sign : s[0];
 
         if (s[0] == center_sign) {
-            process_triangle(mesh, Polygon{q[0], q[1], q[2]}, eps);
-            process_triangle(mesh, Polygon{q[0], q[2], q[3]}, eps);
+            process_triangle(mesh, Polygon{q[0], q[1], q[2]}, eps, quad_dominant);
+            process_triangle(mesh, Polygon{q[0], q[2], q[3]}, eps, quad_dominant);
         } else {
-            process_triangle(mesh, Polygon{q[1], q[2], q[3]}, eps);
-            process_triangle(mesh, Polygon{q[1], q[3], q[0]}, eps);
+            process_triangle(mesh, Polygon{q[1], q[2], q[3]}, eps, quad_dominant);
+            process_triangle(mesh, Polygon{q[1], q[3], q[0]}, eps, quad_dominant);
         }
         return mesh;
     }
 
     const Polygon pos = clip_by_sign(q, +1, eps);
     const Polygon neg = clip_by_sign(q, -1, eps);
-    decompose_polygon(mesh, pos, +1, eps);
-    decompose_polygon(mesh, neg, -1, eps);
+    decompose_polygon(mesh, pos, +1, eps, quad_dominant);
+    decompose_polygon(mesh, neg, -1, eps, quad_dominant);
     return mesh;
 }
 
@@ -422,7 +483,8 @@ MixedMesh QuadLevelSetMesher::remesh(
             sub.nodes = {p00.p, p10.p, p11.p, p01.p};
             sub.phi   = {p00.phi, p10.phi, p11.phi, p01.phi};
 
-            const MixedMesh local = remesh_coarse_quad(sub, eps_);
+            const MixedMesh local = remesh_coarse_quad(
+                sub, eps_, mode == RemeshMode::QuadDominant);
             append_mesh(mesh, local, eps_);
         }
     }
