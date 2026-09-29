@@ -54,7 +54,8 @@ public:
 
     // divisions = N first subdivides the parent Q1 quadrilateral into an
     // N x N grid, then cuts/remeshes only the micro-cells touched by phi = 0.
-    // N=1 preserves the original coarse behavior.
+    // In QuadDominant mode, every triangular cut region is replaced by
+    // 3 surrounding quads + 1 retained inner triangle.
     [[nodiscard]] MixedMesh remesh(
         const QuadInput& input,
         std::size_t divisions = 1,
